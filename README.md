@@ -4,7 +4,7 @@
 
 ![效果图1](./assets/images/1.png)
 ![效果图2](./assets/images/2.png)
-![效果图3](./assets/images/3.png)
+![效果图3](./assets/images/3.jpg)
 
 ## 功能特性
 
