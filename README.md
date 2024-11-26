@@ -2,9 +2,9 @@
 
 这是一个基于 WebRTC 技术的局域网文件传输 Web 应用，允许同一局域网内的设备互相发现并传输文件。
 
-![效果图1](./assets/1.png)
-![效果图2](./assets/2.png)
-![效果图3](./assets/3.png)
+![效果图1](./assets/images/1.png)
+![效果图2](./assets/images/2.png)
+![效果图3](./assets/images/3.png)
 
 ## 功能特性
 
