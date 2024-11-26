@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, CssBaseline, Box } from '@mui/material';
+import { Container, CssBaseline, Box, Snackbar, Alert } from '@mui/material';
 import { io } from 'socket.io-client';
 import Peer from 'peerjs';
 import DeviceList from './components/DeviceList';
@@ -32,40 +32,42 @@ function App() {
   const [fileChunks, setFileChunks] = useState({});
   const [isReceiving, setIsReceiving] = useState(false);
   const [currentFileName, setCurrentFileName] = useState('');
+  const [error, setError] = useState(null);
+  const [activeTransfers, setActiveTransfers] = useState({});
 
   const handleIncomingFile = React.useCallback((data) => {
-    const { fileName, data: fileData, currentChunk, totalChunks } = data;
-    const fileKey = `${fileName}_${totalChunks}`;
-
-    setIsReceiving(true);
-    setCurrentFileName(fileName);
+    const { fileName, data: fileData, currentChunk, totalChunks, fileId } = data;
+    
+    setActiveTransfers(prev => ({
+      ...prev,
+      [fileId]: {
+        fileName,
+        progress: (currentChunk / totalChunks) * 100,
+        isReceiving: true
+      }
+    }));
 
     setFileChunks(prevChunks => {
       const newChunks = { ...prevChunks };
       
-      if (!newChunks[fileKey]) {
-        newChunks[fileKey] = {
+      if (!newChunks[fileId]) {
+        newChunks[fileId] = {
           chunks: new Array(totalChunks),
-          processedChunks: new Set()
+          processedChunks: new Set(),
+          fileName
         };
       }
       
-      if (newChunks[fileKey].processedChunks.has(currentChunk)) {
+      if (newChunks[fileId].processedChunks.has(currentChunk)) {
         return prevChunks;
       }
 
-      newChunks[fileKey].chunks[currentChunk] = fileData;
-      newChunks[fileKey].processedChunks.add(currentChunk);
+      newChunks[fileId].chunks[currentChunk] = fileData;
+      newChunks[fileId].processedChunks.add(currentChunk);
       
-      const receivedCount = newChunks[fileKey].processedChunks.size;
-      console.log(`文件 ${fileName} 进度: ${receivedCount}/${totalChunks}`);
-      
-      setTransferProgress((receivedCount / totalChunks) * 100);
-
-      if (receivedCount === totalChunks) {
-        console.log('文件接收完成，开始组装:', fileName);
-        
-        const completeFile = new Blob(newChunks[fileKey].chunks);
+      if (newChunks[fileId].processedChunks.size === totalChunks) {
+        // 文件接收完成
+        const completeFile = new Blob(newChunks[fileId].chunks);
         const url = URL.createObjectURL(completeFile);
         
         const a = document.createElement('a');
@@ -77,10 +79,13 @@ function App() {
         
         URL.revokeObjectURL(url);
 
-        delete newChunks[fileKey];
-        setTransferProgress(0);
-        setIsReceiving(false);
-        setCurrentFileName('');
+        // 清理状态
+        delete newChunks[fileId];
+        setActiveTransfers(prev => {
+          const newTransfers = { ...prev };
+          delete newTransfers[fileId];
+          return newTransfers;
+        });
       }
 
       return newChunks;
@@ -198,102 +203,108 @@ function App() {
     };
   }, [handleSocketConnect]);
 
-  const handleFileSelect = async (file) => {
-    if (!selectedDevice || !file || !peerInstance) {
-      console.log('无法发送文件:', { 
-        hasSelectedDevice: !!selectedDevice, 
-        hasFile: !!file,
-        hasPeer: !!peerInstance,
-        myPeerId: peerInstance?.id,
-        targetPeerId: selectedDevice?.peerId
-      });
-      return;
-    }
+  const handleFileSelect = async (files) => {
+    if (!selectedDevice || !peerInstance) return;
 
     try {
-      console.log('开始连接peer:', {
-        targetPeerId: selectedDevice.peerId,
-        myPeerId: peerInstance.id,
-        peerStatus: peerInstance.open ? 'open' : 'closed'
-      });
-
-      if (!peerInstance.open) {
-        console.log('等待 peer 连接打开...');
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Peer连接超时')), 5000);
-          const checkOpen = setInterval(() => {
-            if (peerInstance.open) {
-              clearInterval(checkOpen);
-              clearTimeout(timeout);
-              resolve();
-            }
-          }, 100);
-        });
-      }
-
       const conn = peerInstance.connect(selectedDevice.peerId, {
         reliable: true
       });
 
       conn.on('open', () => {
-        console.log('Peer连接已打开，开始传输文件');
-        const chunkSize = 16384;
-        const chunks = Math.ceil(file.size / chunkSize);
-        let currentChunk = 0;
+        files.forEach(file => {
+          const fileId = `${file.name}_${Date.now()}`;
+          const chunkSize = calculateChunkSize(file.size);
+          const chunks = Math.ceil(file.size / chunkSize);
+          let currentChunk = 0;
 
-        const reader = new FileReader();
-        
-        reader.onerror = (error) => {
-          console.error('文件读取错误:', error);
-        };
-
-        reader.onload = (e) => {
-          try {
-            conn.send({
+          // 添加到活跃传输列表
+          setActiveTransfers(prev => ({
+            ...prev,
+            [fileId]: {
               fileName: file.name,
-              data: e.target.result,
-              currentChunk,
-              totalChunks: chunks
-            });
-            
-            currentChunk++;
-            setTransferProgress((currentChunk / chunks) * 100);
-
-            if (currentChunk < chunks) {
-              const nextSlice = file.slice(
-                currentChunk * chunkSize,
-                (currentChunk + 1) * chunkSize
-              );
-              reader.readAsArrayBuffer(nextSlice);
-            } else {
-              console.log('文件发送完成');
-              setTimeout(() => {
-                setTransferProgress(0);
-                setCurrentFileName('');
-              }, 1000);
+              progress: 0,
+              isReceiving: false
             }
-          } catch (error) {
-            console.error('发送文件数据错误:', error);
-          }
-        };
+          }));
 
-        const firstSlice = file.slice(0, chunkSize);
-        reader.readAsArrayBuffer(firstSlice);
+          const reader = new FileReader();
+          
+          reader.onerror = (error) => {
+            console.error('文件读取错误:', error);
+            // 从活跃传输列表中移除
+            setActiveTransfers(prev => {
+              const newTransfers = { ...prev };
+              delete newTransfers[fileId];
+              return newTransfers;
+            });
+          };
+
+          reader.onload = (e) => {
+            try {
+              conn.send({
+                fileId,
+                fileName: file.name,
+                data: e.target.result,
+                currentChunk,
+                totalChunks: chunks
+              });
+              
+              currentChunk++;
+              
+              // 更新进度
+              setActiveTransfers(prev => ({
+                ...prev,
+                [fileId]: {
+                  ...prev[fileId],
+                  progress: (currentChunk / chunks) * 100
+                }
+              }));
+
+              if (currentChunk < chunks) {
+                const nextSlice = file.slice(
+                  currentChunk * chunkSize,
+                  (currentChunk + 1) * chunkSize
+                );
+                reader.readAsArrayBuffer(nextSlice);
+              } else {
+                // 传输完成，从列表中移除
+                setTimeout(() => {
+                  setActiveTransfers(prev => {
+                    const newTransfers = { ...prev };
+                    delete newTransfers[fileId];
+                    return newTransfers;
+                  });
+                }, 1000);
+              }
+            } catch (error) {
+              console.error('发送文件数据错误:', error);
+            }
+          };
+
+          const firstSlice = file.slice(0, chunkSize);
+          reader.readAsArrayBuffer(firstSlice);
+        });
       });
-
-      conn.on('error', (error) => {
-        console.error('文件传输错误:', error);
-      });
-
-      conn.on('close', () => {
-        console.log('Peer连接已关闭');
-      });
-
     } catch (error) {
       console.error('创建peer连接失败:', error);
-      setCurrentFileName('');
-      setTransferProgress(0);
+      setError('连接失败，请重试');
     }
+  };
+
+  const calculateChunkSize = (fileSize) => {
+    if (fileSize > 1024 * 1024 * 100) { // 100MB
+      return 1024 * 1024; // 1MB chunks
+    }
+    return 16384; // 默认16KB
+  };
+
+  const resumeFileTransfer = (fileName, startChunk) => {
+    // 实现断点续传逻辑
+  };
+
+  const verifyFileIntegrity = (file, chunks) => {
+    // 实现文件校验逻辑
   };
 
   return (
@@ -307,11 +318,14 @@ function App() {
         />
         <FileTransfer
           onFileSelect={handleFileSelect}
-          transferProgress={transferProgress}
           selectedDevice={selectedDevice}
-          isReceiving={isReceiving}
-          currentFileName={currentFileName}
+          activeTransfers={activeTransfers}
         />
+        {error && (
+          <Snackbar open={!!error} autoHideDuration={6000} onClose={() => setError(null)}>
+            <Alert severity="error">{error}</Alert>
+          </Snackbar>
+        )}
       </Box>
     </Container>
   );

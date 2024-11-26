@@ -5,7 +5,10 @@ import {
   Typography, 
   LinearProgress,
   Box,
-  Stack
+  Stack,
+  List,
+  ListItem,
+  ListItemText
 } from '@mui/material';
 
 const FileTransfer = ({ 
@@ -13,7 +16,8 @@ const FileTransfer = ({
   transferProgress, 
   selectedDevice,
   isReceiving = false,
-  currentFileName = ''
+  currentFileName = '',
+  activeTransfers = {}
 }) => {
   const fileInputRef = useRef(null);
 
@@ -21,8 +25,30 @@ const FileTransfer = ({
     fileInputRef.current?.click();
   };
 
+  const handleFileSelect = (files) => {
+    const maxSize = 1024 * 1024 * 500; // 500MB
+    const validFiles = Array.from(files).filter(file => {
+      if (file.size > maxSize) {
+        alert(`文件 ${file.name} 大小超过500MB，已跳过`);
+        return false;
+      }
+      return true;
+    });
+    onFileSelect(validFiles);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    handleFileSelect(e.dataTransfer.files);
+  };
+
   return (
-    <Paper elevation={3} sx={{ p: 2 }}>
+    <Paper 
+      elevation={3} 
+      sx={{ p: 2 }}
+      onDrop={handleDrop}
+      onDragOver={(e) => e.preventDefault()}
+    >
       <Stack spacing={2}>
         <Typography variant="h6" gutterBottom>
           文件传输
@@ -32,74 +58,68 @@ const FileTransfer = ({
           type="file"
           ref={fileInputRef}
           style={{ display: 'none' }}
-          onChange={(e) => onFileSelect(e.target.files[0])}
+          onChange={(e) => handleFileSelect(e.target.files)}
+          multiple
         />
         <Button
           variant="contained"
           onClick={handleFileClick}
-          disabled={!selectedDevice || transferProgress > 0}
+          disabled={!selectedDevice}
           sx={{ 
-            backgroundColor: isReceiving ? '#f50057' : '#2196f3',
+            backgroundColor: '#2196f3',
             '&:hover': {
-              backgroundColor: isReceiving ? '#c51162' : '#1976d2'
+              backgroundColor: '#1976d2'
             }
           }}
         >
-          {transferProgress > 0 ? '传输中...' : '选择文件发送'}
+          选择文件发送
         </Button>
 
-        {transferProgress > 0 && (
-          <Box sx={{ width: '100%' }}>
-            <Stack spacing={1}>
-              <Typography 
-                variant="body2" 
-                color="text.secondary"
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 1
-                }}
-              >
-                <span style={{ 
-                  color: isReceiving ? '#f50057' : '#2196f3',
-                  fontWeight: 'bold'
-                }}>
-                  {isReceiving ? '↓' : '↑'}
-                </span>
-                <span>
-                  {isReceiving ? '正在接收:' : '正在发送:'} {currentFileName}
-                </span>
-              </Typography>
+        {Object.keys(activeTransfers).length > 0 && (
+          <List>
+            {Object.entries(activeTransfers).map(([fileId, transfer]) => (
+              <ListItem key={fileId}>
+                <Stack spacing={1} sx={{ width: '100%' }}>
+                  <Typography 
+                    variant="body2" 
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1
+                    }}
+                  >
+                    <span style={{ 
+                      color: transfer.isReceiving ? '#f50057' : '#2196f3',
+                      fontWeight: 'bold'
+                    }}>
+                      {transfer.isReceiving ? '↓' : '↑'}
+                    </span>
+                    <span>
+                      {transfer.fileName} ({Math.round(transfer.progress)}%)
+                    </span>
+                  </Typography>
 
-              <LinearProgress 
-                variant="determinate" 
-                value={transferProgress} 
-                sx={{
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: isReceiving ? 'rgba(245, 0, 87, 0.1)' : 'rgba(33, 150, 243, 0.1)',
-                  '& .MuiLinearProgress-bar': {
-                    borderRadius: 4,
-                    backgroundColor: isReceiving ? '#f50057' : '#2196f3'
-                  }
-                }}
-              />
-
-              <Typography 
-                variant="body2" 
-                color="text.secondary" 
-                align="center"
-                sx={{ 
-                  minWidth: '40px',
-                  color: isReceiving ? '#f50057' : '#2196f3',
-                  fontWeight: 'bold'
-                }}
-              >
-                {Math.round(transferProgress)}%
-              </Typography>
-            </Stack>
-          </Box>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={transfer.progress} 
+                    sx={{
+                      height: 4,
+                      borderRadius: 2,
+                      backgroundColor: transfer.isReceiving ? 
+                        'rgba(245, 0, 87, 0.1)' : 
+                        'rgba(33, 150, 243, 0.1)',
+                      '& .MuiLinearProgress-bar': {
+                        borderRadius: 2,
+                        backgroundColor: transfer.isReceiving ? 
+                          '#f50057' : 
+                          '#2196f3'
+                      }
+                    }}
+                  />
+                </Stack>
+              </ListItem>
+            ))}
+          </List>
         )}
       </Stack>
     </Paper>

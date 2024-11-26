@@ -3,28 +3,30 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { ExpressPeerServer } = require('peer');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const config = require('./config');
 
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
+// 使用配置的 CORS 设置
+app.use(cors(config.security.cors));
 
 // Socket.IO 配置
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
-  transports: ['polling']
+  cors: config.security.cors,
+  ...config.socket
 });
 
 // PeerJS 配置
-const peerServer = ExpressPeerServer(server, {
-  debug: true,
-  path: '/myapp'
-});
+const peerServer = ExpressPeerServer(server, config.peer);
 
 app.use('/peerjs', peerServer);
+
+// 使用配置的速率限制
+const limiter = rateLimit(config.security.rateLimit);
+app.use(limiter);
 
 // 存储在线设备
 const onlineDevices = new Map();
@@ -66,7 +68,28 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3001;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`服务器运行在端口 ${PORT}`);
-}); 
+app.use(helmet());
+
+// 添加基本的监控
+const transferStats = {
+  totalTransfers: 0,
+  successfulTransfers: 0,
+  failedTransfers: 0,
+  totalBytes: 0
+};
+
+// 添加API端点获取统计信息
+app.get('/stats', (req, res) => {
+  res.json(transferStats);
+});
+
+// 导出 app 实例供测试使用
+module.exports = app;
+
+// 只在直接运行时启动服务器
+if (require.main === module) {
+  server.listen(config.server.port, config.server.host, () => {
+    console.log(`服务器运行在 ${config.server.host}:${config.server.port}`);
+    console.log(`环境: ${process.env.NODE_ENV || 'development'}`);
+  });
+} 
